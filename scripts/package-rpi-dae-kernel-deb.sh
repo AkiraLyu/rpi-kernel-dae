@@ -193,15 +193,11 @@ if [ -f "/usr/lib/\$PKG_NAME/\$KERNEL_RELEASE/overlays/README" ]; then
 fi
 
 if [ -f "\$BOOTDIR/config.txt" ]; then
-  sed -i "/^# begin \$PKG_NAME$/,/^# end \$PKG_NAME$/d" "\$BOOTDIR/config.txt"
-
-  cat >> "\$BOOTDIR/config.txt" <<EOCFG
-
-# begin \$PKG_NAME
-[all]
-kernel=\$BOOT_IMAGE
-# end \$PKG_NAME
-EOCFG
+  if grep -q '^kernel=' "\$BOOTDIR/config.txt"; then
+    sed -i "0,/^kernel=/{s|^kernel=.*|kernel=\$BOOT_IMAGE|}" "\$BOOTDIR/config.txt"
+  else
+    echo "warning: \$BOOTDIR/config.txt does not contain a kernel= line; config.txt not modified" >&2
+  fi
 else
   echo "warning: \$BOOTDIR/config.txt not found; kernel image installed but config.txt not modified" >&2
 fi
@@ -225,10 +221,6 @@ BOOT_IMAGE="$BOOT_IMAGE"
 
 if [ "\$1" = "remove" ] || [ "\$1" = "purge" ]; then
   for BOOTDIR in /boot/firmware /boot; do
-    if [ -f "\$BOOTDIR/config.txt" ]; then
-      sed -i "/^# begin \$PKG_NAME$/,/^# end \$PKG_NAME$/d" "\$BOOTDIR/config.txt"
-    fi
-
     if [ -f "\$BOOTDIR/\$BOOT_IMAGE" ]; then
       rm -f "\$BOOTDIR/\$BOOT_IMAGE"
     fi
