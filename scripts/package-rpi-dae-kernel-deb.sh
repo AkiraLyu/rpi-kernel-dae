@@ -135,7 +135,7 @@ Priority: optional
 Architecture: $DEB_ARCH
 Maintainer: $MAINTAINER
 Installed-Size: $INSTALLED_SIZE
-Depends: kmod
+Depends: kmod, initramfs-tools
 Description: Custom Raspberry Pi kernel for dae
  Custom Raspberry Pi Linux kernel with dae-required eBPF and BTF options.
  Kernel release: $KERNEL_RELEASE
@@ -149,6 +149,7 @@ set -e
 PKG_NAME="$PKG_NAME"
 KERNEL_RELEASE="$KERNEL_RELEASE"
 BOOT_IMAGE="$BOOT_IMAGE"
+AUTO_INITRAMFS="\$(printf '%s\n' "\$BOOT_IMAGE" | sed 's/^kernel/initramfs/; s/[.]img$//')"
 
 find_bootdir() {
   for d in /boot/firmware /boot; do
@@ -187,6 +188,7 @@ fi
 cp -f "/usr/lib/\$PKG_NAME/\$KERNEL_RELEASE/\$BOOT_IMAGE" "\$BOOTDIR/\$BOOT_IMAGE"
 cp -f /usr/lib/\$PKG_NAME/\$KERNEL_RELEASE/dtbs/*.dtb "\$BOOTDIR/" 2>/dev/null || true
 cp -f /usr/lib/\$PKG_NAME/\$KERNEL_RELEASE/overlays/*.dtb* "\$BOOTDIR/overlays/" 2>/dev/null || true
+cp -f "/usr/share/doc/\$PKG_NAME/config-\$KERNEL_RELEASE" "/boot/config-\$KERNEL_RELEASE"
 
 if [ -f "/usr/lib/\$PKG_NAME/\$KERNEL_RELEASE/overlays/README" ]; then
   cp -f "/usr/lib/\$PKG_NAME/\$KERNEL_RELEASE/overlays/README" "\$BOOTDIR/overlays/README"
@@ -202,10 +204,18 @@ else
   echo "warning: \$BOOTDIR/config.txt not found; kernel image installed but config.txt not modified" >&2
 fi
 
+if [ -f "/boot/initrd.img-\$KERNEL_RELEASE" ]; then
+  update-initramfs -u -k "\$KERNEL_RELEASE"
+else
+  update-initramfs -c -k "\$KERNEL_RELEASE"
+fi
+cp -f "/boot/initrd.img-\$KERNEL_RELEASE" "\$BOOTDIR/\$AUTO_INITRAMFS"
+
 depmod "\$KERNEL_RELEASE" || true
 
 echo "Installed \$PKG_NAME \$KERNEL_RELEASE"
 echo "Boot image: \$BOOTDIR/\$BOOT_IMAGE"
+echo "Initramfs: \$BOOTDIR/\$AUTO_INITRAMFS"
 echo "Backup directory: \$BACKUP_DIR"
 echo "Reboot, then verify with: uname -r"
 EOF
@@ -217,12 +227,18 @@ cat > "$PKG_ROOT/DEBIAN/postrm" <<EOF
 set -e
 
 PKG_NAME="$PKG_NAME"
+KERNEL_RELEASE="$KERNEL_RELEASE"
 BOOT_IMAGE="$BOOT_IMAGE"
+AUTO_INITRAMFS="\$(printf '%s\n' "\$BOOT_IMAGE" | sed 's/^kernel/initramfs/; s/[.]img$//')"
 
 if [ "\$1" = "remove" ] || [ "\$1" = "purge" ]; then
+  rm -f "/boot/initrd.img-\$KERNEL_RELEASE" "/boot/config-\$KERNEL_RELEASE"
   for BOOTDIR in /boot/firmware /boot; do
     if [ -f "\$BOOTDIR/\$BOOT_IMAGE" ]; then
       rm -f "\$BOOTDIR/\$BOOT_IMAGE"
+    fi
+    if [ -f "\$BOOTDIR/\$AUTO_INITRAMFS" ]; then
+      rm -f "\$BOOTDIR/\$AUTO_INITRAMFS"
     fi
   done
 fi
