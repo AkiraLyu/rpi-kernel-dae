@@ -48,6 +48,7 @@ need_cmd bc
 need_cmd bison
 need_cmd flex
 need_cmd pahole
+need_cmd bindgen
 need_cmd "${CROSS_COMPILE}gcc"
 
 mkdir -p "$DIST_DIR" "$CONFIG_DIR"
@@ -69,6 +70,8 @@ CONFIG_LOCALVERSION="$LOCALVERSION"
 
 CONFIG_IKCONFIG=y
 CONFIG_IKCONFIG_PROC=y
+
+CONFIG_RUST=y
 
 CONFIG_BPF=y
 CONFIG_BPF_SYSCALL=y
@@ -106,7 +109,10 @@ echo "==> LOCALVERSION=$LOCALVERSION"
 echo "==> Generating base config..."
 make "$DEFCONFIG"
 
-echo "==> Merging dae/BTF config fragment..."
+echo "==> Checking Rust toolchain..."
+make rustavailable
+
+echo "==> Merging dae/BTF/Rust config fragment..."
 ./scripts/kconfig/merge_config.sh -m .config "$CONFIG_FRAGMENT"
 
 # 再用 scripts/config 强制一遍关键项，避免 fragment 被 choice 覆盖时不明显。
@@ -115,6 +121,14 @@ scripts/config --disable LOCALVERSION_AUTO
 
 scripts/config --enable IKCONFIG
 scripts/config --enable IKCONFIG_PROC
+
+scripts/config --enable RUST
+if grep -q '^config GENDWARFKSYMS$' kernel/module/Kconfig; then
+  scripts/config --disable GENKSYMS
+  scripts/config --enable GENDWARFKSYMS
+else
+  scripts/config --disable MODVERSIONS
+fi
 
 scripts/config --enable BPF
 scripts/config --enable BPF_SYSCALL
@@ -163,6 +177,7 @@ required_y=(
   CONFIG_DEBUG_INFO_BTF
   CONFIG_IKCONFIG
   CONFIG_IKCONFIG_PROC
+  CONFIG_RUST
 )
 
 failed=0
@@ -179,6 +194,11 @@ if ! grep -q '^CONFIG_NET_SCH_INGRESS=m$\|^CONFIG_NET_SCH_INGRESS=y$' .config; t
   failed=1
 fi
 
+if grep -q '^CONFIG_MODVERSIONS=y$' .config && ! grep -q '^CONFIG_GENDWARFKSYMS=y$' .config; then
+  echo "error: CONFIG_MODVERSIONS requires CONFIG_GENDWARFKSYMS for Rust" >&2
+  failed=1
+fi
+
 if ! grep -q '^# CONFIG_DEBUG_INFO_REDUCED is not set$' .config; then
   echo "error: CONFIG_DEBUG_INFO_REDUCED is not disabled" >&2
   failed=1
@@ -189,6 +209,7 @@ if [[ "$failed" -ne 0 ]]; then
   echo "Some required options were not enabled."
   echo "Try running:"
   echo "  cd $LINUX_DIR"
+  echo "  make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE rustavailable"
   echo "  make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE menuconfig"
   echo
   exit 1
