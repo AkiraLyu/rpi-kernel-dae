@@ -46,6 +46,8 @@ mkdir -p "$DIST_DIR"
 mkdir -p "$PKG_ROOT/DEBIAN"
 mkdir -p "$PKG_ROOT/usr/lib/$PKG_NAME/$KERNEL_RELEASE"
 mkdir -p "$PKG_ROOT/usr/share/doc/$PKG_NAME"
+install -m 0755 "$REPO_ROOT/scripts/update-rpi-boot-config.sh" \
+  "$PKG_ROOT/usr/lib/$PKG_NAME/update-boot-config"
 
 echo "==> Packaging kernel release: $KERNEL_RELEASE"
 echo "==> Package version: $PKG_VERSION"
@@ -194,16 +196,6 @@ if [ -f "/usr/lib/\$PKG_NAME/\$KERNEL_RELEASE/overlays/README" ]; then
   cp -f "/usr/lib/\$PKG_NAME/\$KERNEL_RELEASE/overlays/README" "\$BOOTDIR/overlays/README"
 fi
 
-if [ -f "\$BOOTDIR/config.txt" ]; then
-  if grep -q '^kernel=' "\$BOOTDIR/config.txt"; then
-    sed -i "0,/^kernel=/{s|^kernel=.*|kernel=\$BOOT_IMAGE|}" "\$BOOTDIR/config.txt"
-  else
-    echo "warning: \$BOOTDIR/config.txt does not contain a kernel= line; config.txt not modified" >&2
-  fi
-else
-  echo "warning: \$BOOTDIR/config.txt not found; kernel image installed but config.txt not modified" >&2
-fi
-
 if [ -f "/boot/initrd.img-\$KERNEL_RELEASE" ]; then
   update-initramfs -u -k "\$KERNEL_RELEASE"
 else
@@ -212,6 +204,10 @@ fi
 cp -f "/boot/initrd.img-\$KERNEL_RELEASE" "\$BOOTDIR/\$AUTO_INITRAMFS"
 
 depmod "\$KERNEL_RELEASE" || true
+
+# Only select the new kernel after its matching initramfs is ready.
+"/usr/lib/\$PKG_NAME/update-boot-config" "\$BOOTDIR/config.txt" \
+  "\$PKG_NAME" "\$BOOT_IMAGE" "\$AUTO_INITRAMFS"
 
 echo "Installed \$PKG_NAME \$KERNEL_RELEASE"
 echo "Boot image: \$BOOTDIR/\$BOOT_IMAGE"

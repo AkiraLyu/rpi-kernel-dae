@@ -12,7 +12,7 @@ set -euo pipefail
 #
 # 可覆盖变量示例：
 #   LOCALVERSION=-dae \
-#   KERNEL_BRANCH=rpi-6.6.y \
+#   KERNEL_BRANCH=rpi-6.18.y \
 #   ./scripts/build-rpi-dae-kernel.sh
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,6 +31,16 @@ DEFCONFIG="${DEFCONFIG:-bcm2712_defconfig}"
 KERNEL_IMAGE_NAME="${KERNEL_IMAGE_NAME:-kernel_2712}"
 LOCALVERSION="${LOCALVERSION:--dae}"
 JOBS="${JOBS:-$(nproc)}"
+ENABLE_RUST="${ENABLE_RUST:-0}"
+
+case "$ENABLE_RUST" in
+  0) RUST_CONFIG='# CONFIG_RUST is not set' ;;
+  1) RUST_CONFIG='CONFIG_RUST=y' ;;
+  *)
+    echo "error: ENABLE_RUST must be 0 or 1" >&2
+    exit 1
+    ;;
+esac
 
 export ARCH
 export CROSS_COMPILE
@@ -48,8 +58,11 @@ need_cmd bc
 need_cmd bison
 need_cmd flex
 need_cmd pahole
-need_cmd bindgen
 need_cmd "${CROSS_COMPILE}gcc"
+if [[ "$ENABLE_RUST" == 1 ]]; then
+  need_cmd rustc
+  need_cmd bindgen
+fi
 
 mkdir -p "$DIST_DIR" "$CONFIG_DIR"
 
@@ -71,7 +84,7 @@ CONFIG_LOCALVERSION="$LOCALVERSION"
 CONFIG_IKCONFIG=y
 CONFIG_IKCONFIG_PROC=y
 
-CONFIG_RUST=y
+$RUST_CONFIG
 
 CONFIG_BPF=y
 CONFIG_BPF_SYSCALL=y
@@ -105,14 +118,17 @@ echo "==> CROSS_COMPILE=$CROSS_COMPILE"
 echo "==> DEFCONFIG=$DEFCONFIG"
 echo "==> KERNEL_IMAGE_NAME=$KERNEL_IMAGE_NAME"
 echo "==> LOCALVERSION=$LOCALVERSION"
+echo "==> ENABLE_RUST=$ENABLE_RUST"
 
 echo "==> Generating base config..."
 make "$DEFCONFIG"
 
-echo "==> Checking Rust toolchain..."
-make rustavailable
+if [[ "$ENABLE_RUST" == 1 ]]; then
+  echo "==> Checking Rust toolchain..."
+  make rustavailable
+fi
 
-echo "==> Merging dae/BTF/Rust config fragment..."
+echo "==> Merging dae/BTF config fragment..."
 ./scripts/kconfig/merge_config.sh -m .config "$CONFIG_FRAGMENT"
 
 # 再用 scripts/config 强制一遍关键项，避免 fragment 被 choice 覆盖时不明显。
@@ -122,12 +138,16 @@ scripts/config --disable LOCALVERSION_AUTO
 scripts/config --enable IKCONFIG
 scripts/config --enable IKCONFIG_PROC
 
-scripts/config --enable RUST
-if grep -q '^config GENDWARFKSYMS$' kernel/module/Kconfig; then
-  scripts/config --disable GENKSYMS
-  scripts/config --enable GENDWARFKSYMS
+if [[ "$ENABLE_RUST" == 1 ]]; then
+  scripts/config --enable RUST
+  if grep -q '^config GENDWARFKSYMS$' kernel/module/Kconfig; then
+    scripts/config --disable GENKSYMS
+    scripts/config --enable GENDWARFKSYMS
+  else
+    scripts/config --disable MODVERSIONS
+  fi
 else
-  scripts/config --disable MODVERSIONS
+  scripts/config --disable RUST
 fi
 
 scripts/config --enable BPF
@@ -177,8 +197,10 @@ required_y=(
   CONFIG_DEBUG_INFO_BTF
   CONFIG_IKCONFIG
   CONFIG_IKCONFIG_PROC
-  CONFIG_RUST
 )
+if [[ "$ENABLE_RUST" == 1 ]]; then
+  required_y+=(CONFIG_RUST)
+fi
 
 failed=0
 
@@ -194,7 +216,7 @@ if ! grep -q '^CONFIG_NET_SCH_INGRESS=m$\|^CONFIG_NET_SCH_INGRESS=y$' .config; t
   failed=1
 fi
 
-if grep -q '^CONFIG_MODVERSIONS=y$' .config && ! grep -q '^CONFIG_GENDWARFKSYMS=y$' .config; then
+if [[ "$ENABLE_RUST" == 1 ]] && grep -q '^CONFIG_MODVERSIONS=y$' .config && ! grep -q '^CONFIG_GENDWARFKSYMS=y$' .config; then
   echo "error: CONFIG_MODVERSIONS requires CONFIG_GENDWARFKSYMS for Rust" >&2
   failed=1
 fi
@@ -209,7 +231,9 @@ if [[ "$failed" -ne 0 ]]; then
   echo "Some required options were not enabled."
   echo "Try running:"
   echo "  cd $LINUX_DIR"
-  echo "  make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE rustavailable"
+  if [[ "$ENABLE_RUST" == 1 ]]; then
+    echo "  make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE rustavailable"
+  fi
   echo "  make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE menuconfig"
   echo
   exit 1
@@ -226,6 +250,7 @@ CROSS_COMPILE=$CROSS_COMPILE
 DEFCONFIG=$DEFCONFIG
 KERNEL_IMAGE_NAME=$KERNEL_IMAGE_NAME
 LOCALVERSION=$LOCALVERSION
+ENABLE_RUST=$ENABLE_RUST
 KERNEL_RELEASE=$KERNEL_RELEASE
 LINUX_DIR=$LINUX_DIR
 EOF
